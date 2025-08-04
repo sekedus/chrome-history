@@ -7,6 +7,7 @@ on:
 
 jobs:
   update:
+    if: github.event.release.prerelease == false
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -32,6 +33,7 @@ jobs:
           const isManual = process.env.MANUAL_RUN === 'true';
           const repo = process.env.GH_REPO;
           const file = 'releases.json';
+          const hasFile = fs.existsSync(file);
 
           function gh(path, args = '') {
             return JSON.parse(execSync(`gh api ${path} ${args}`, { encoding: 'utf8' }));
@@ -52,17 +54,17 @@ jobs:
             try {
               const r = gh(`/repos/${repo}/releases/latest`);
               return (!r.draft && !r.prerelease) ? [r] : [];
-            } catch (e) {
+            } catch {
               return [];
             }
           }
 
-          const existing = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
+          const existing = hasFile ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
           const existingMap = new Map(existing.map(r => [r.version, r]));
-          const releases = isManual ? getAllReleases() : getLatestRelease();
+          const releases = isManual || !hasFile ? getAllReleases() : getLatestRelease();
 
           const map = new Map(existingMap);  // clone
-          let added = 0;
+          let addedVersions = [];
 
           for (const r of releases) {
             const assets = r.assets.map(a => ({
@@ -72,36 +74,39 @@ jobs:
               digest: a.digest  // sha256
             }));
             const version = r.tag_name;
-            const entry = {
-              version,
-              url: r.html_url,
-              assets
-            };
+            const entry = { version, url: r.html_url, assets };
 
-            if (!map.has(version) || JSON.stringify(map.get(version)) !== JSON.stringify(entry)) {
+            const existed = map.has(version);
+            if (!existed || JSON.stringify(map.get(version)) !== JSON.stringify(entry)) {
               map.set(version, entry);
-              added++;
+                if (!existed) {
+                  addedVersions.push(version);
+                }
             }
           }
 
           let removed = 0;
-          if (isManual) {
-            const validVersions = new Set(releases.map(r => r.tag_name));
+          if (isManual || !hasFile) {
+            const valid = new Set(releases.map(r => r.tag_name));
             for (const version of [...map.keys()]) {
-              if (!validVersions.has(version)) {
+              if (!valid.has(version)) {
                 map.delete(version);
                 removed++;
               }
             }
           }
 
-          const out = [...map.values()].sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
-          fs.writeFileSync(file, JSON.stringify(out, null, 2));
+          // sort by version (desc)
+          const out = [...map.values()].sort((a, b) =>
+            b.version.localeCompare(a.version, undefined, { numeric: true })
+          );
+          fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n');
 
           fs.appendFileSync(process.env.GITHUB_OUTPUT, [
-            `added=${added}`,
-            `removed=${removed}`,
-            `manual=${isManual}`
+            `initial=${!hasFile}`,
+            `added_versions=${addedVersions.join(',')}`,
+            `manual=${isManual}`,
+            `removed=${removed}`
           ].join('\n') + '\n');
           EOF
 
@@ -112,21 +117,22 @@ jobs:
           git add releases.json
 
           if ! git diff --cached --quiet; then
-            ADDED="${{ steps.update-json.outputs.added }}"
-            REMOVED="${{ steps.update-json.outputs.removed }}"
+            INITIAL="${{ steps.update-json.outputs.initial }}"
+            ADDED_VERSIONS="${{ steps.update-json.outputs.added_versions }}"
             MANUAL="${{ steps.update-json.outputs.manual }}"
+            REMOVED="${{ steps.update-json.outputs.removed }}"
 
-            if git log --format=oneline -- releases.json | grep -q .; then
-              if [ "$ADDED" -gt 0 ]; then
-                VERSION=$(jq -r '.[0].version' releases.json)
-                MSG="Update releases.json for version $VERSION"
-              elif [ "$MANUAL" = "true" ] && [ "$REMOVED" -gt 0 ]; then
-                MSG="chore: sync releases.json"
-              else
-                MSG="Update releases.json"
-              fi
+            IFS=',' read -r -a VERSIONS <<< "$ADDED_VERSIONS"
+            ADDED_COUNT="${#VERSIONS[@]}"
+
+            if [ "$INITIAL" = "true" ]; then
+              MSG="Initial releases.json"
+            elif [ "$ADDED_COUNT" -gt 0 ]; then
+              MSG="Update releases.json for version ${VERSIONS[0]}"
+            elif [ "$MANUAL" = "true" ] && [ "$REMOVED" -gt 0 ]; then
+              MSG="chore: sync releases.json"
             else
-              MSG="Initial releases.json with full release history"
+              MSG="Update releases.json"
             fi
 
             git commit -m "$MSG"
