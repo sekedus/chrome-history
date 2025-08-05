@@ -6,11 +6,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  update:
-    if: github.event.release.prerelease == false
+  sync:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
+    strategy:
+      matrix:
+        type: [stable, prerelease]
 
     steps:
       - uses: actions/checkout@v4
@@ -19,12 +22,13 @@ jobs:
 
       - uses: actions/setup-node@v4
 
-      - name: Update releases.json
+      - name: Update ${{ matrix.type }} releases JSON
         id: update-json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+          RELEASE_TYPE: ${{ matrix.type }}
         run: |
           node <<'EOF'
           const { execSync } = require('child_process');
@@ -32,7 +36,9 @@ jobs:
 
           const isManual = process.env.MANUAL_RUN === 'true';
           const repo = process.env.GH_REPO;
-          const file = 'releases.json';
+          const type = process.env.RELEASE_TYPE;
+          const file = type === 'stable' ? 'releases.json' : 'releases-pre.json';
+          const isPrerelease = type === 'prerelease';
           const hasFile = fs.existsSync(file);
 
           function gh(path, args = '') {
@@ -44,7 +50,9 @@ jobs:
             let page = 1, releases = [], fetched;
             do {
               fetched = gh(`/repos/${repo}/releases?per_page=${perPage}&page=${page}`);
-              releases.push(...fetched.filter(r => !r.draft && !r.prerelease));
+              releases.push(...fetched.filter(r =>
+                !r.draft && !!r.prerelease === isPrerelease
+              ));
               page++;
             } while (fetched.length === perPage);
             return releases;
@@ -53,7 +61,7 @@ jobs:
           function getLatestRelease() {
             try {
               const r = gh(`/repos/${repo}/releases/latest`);
-              return (!r.draft && !r.prerelease) ? [r] : [];
+              return (!r.draft && (!!r.prerelease === isPrerelease)) ? [r] : [];
             } catch {
               return [];
             }
@@ -79,9 +87,9 @@ jobs:
             const existed = map.has(version);
             if (!existed || JSON.stringify(map.get(version)) !== JSON.stringify(entry)) {
               map.set(version, entry);
-                if (!existed) {
-                  addedVersions.push(version);
-                }
+              if (!existed) {
+                addedVersions.push(version);
+              }
             }
           }
 
@@ -96,6 +104,16 @@ jobs:
             }
           }
 
+          if (map.size === 0) {
+            if (fs.existsSync(file)) {
+              fs.writeFileSync(file, '[]\n');
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip_commit=false\n`);
+            } else {
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip_commit=true\n`);
+            }
+            process.exit(0);
+          }
+
           // sort by version (desc)
           const out = [...map.values()].sort((a, b) =>
             b.version.localeCompare(a.version, undefined, { numeric: true })
@@ -106,15 +124,20 @@ jobs:
             `initial=${!hasFile}`,
             `added_versions=${addedVersions.join(',')}`,
             `manual=${isManual}`,
-            `removed=${removed}`
+            `removed=${removed}`,
+            `file=${file}`,
+            `skip_commit=false`
           ].join('\n') + '\n');
           EOF
 
       - name: Commit and push if changed
+        if: steps.update-json.outputs.skip_commit != 'true'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add releases.json
+
+          FILE="${{ steps.update-json.outputs.file }}"
+          git add "$FILE"
 
           if ! git diff --cached --quiet; then
             INITIAL="${{ steps.update-json.outputs.initial }}"
@@ -126,15 +149,16 @@ jobs:
             ADDED_COUNT="${#VERSIONS[@]}"
 
             if [ "$INITIAL" = "true" ]; then
-              MSG="Initial releases.json"
+              MSG="Initial $FILE"
             elif [ "$ADDED_COUNT" -gt 0 ]; then
-              MSG="Update releases.json for version ${VERSIONS[0]}"
+              MSG="Update $FILE for version ${VERSIONS[0]}"
             elif [ "$MANUAL" = "true" ] && [ "$REMOVED" -gt 0 ]; then
-              MSG="chore: sync releases.json"
+              MSG="chore: sync $FILE"
             else
-              MSG="Update releases.json"
+              MSG="Update $FILE"
             fi
 
             git commit -m "$MSG"
+            git pull --rebase origin $(git rev-parse --abbrev-ref HEAD)
             git push
           fi
