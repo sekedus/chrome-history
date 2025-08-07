@@ -2,163 +2,132 @@ name: Sync GitHub Releases to JSON
 
 on:
   release:
-    types: [published]
-  workflow_dispatch:
+    types: [published, edited, deleted]
+  workflow_dispatch:  # Just to show this workflow in the Actions tab
 
 jobs:
   sync:
+    # Only run on release events, skip manual triggers
+    if: github.event_name != 'workflow_dispatch' && github.event.release.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
-    strategy:
-      matrix:
-        type: [stable, prerelease]
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout default branch
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Update ${{ matrix.type }} releases JSON
+      - name: Dump release event to JSON file
+        run: |
+          echo '${{ toJson(github.event.release) }}' > release-data.json
+
+      - name: Update releases JSON
         id: update-json
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
-          RELEASE_TYPE: ${{ matrix.type }}
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
         run: |
           node <<'EOF'
-          const { execSync } = require('child_process');
           const fs = require('fs');
 
-          const isManual = process.env.MANUAL_RUN === 'true';
-          const repo = process.env.GH_REPO;
-          const type = process.env.RELEASE_TYPE;
-          const file = type === 'stable' ? 'releases.json' : 'releases-pre.json';
-          const isPrerelease = type === 'prerelease';
+          const action = process.env.GITHUB_EVENT_ACTION;
+          const release = JSON.parse(fs.readFileSync('release-data.json', 'utf8'));
+
+          const isPrerelease = release.prerelease;
+          const file = isPrerelease ? 'releases-pre.json' : 'releases.json';
           const hasFile = fs.existsSync(file);
 
-          function gh(path, args = '') {
-            return JSON.parse(execSync(`gh api ${path} ${args}`, { encoding: 'utf8' }));
-          }
-
-          function getAllReleases() {
-            const perPage = 100;
-            let page = 1, releases = [], fetched;
-            do {
-              fetched = gh(`/repos/${repo}/releases?per_page=${perPage}&page=${page}`);
-              releases.push(...fetched.filter(r =>
-                !r.draft && !!r.prerelease === isPrerelease
-              ));
-              page++;
-            } while (fetched.length === perPage);
-            return releases;
-          }
-
-          function getLatestRelease() {
-            try {
-              const r = gh(`/repos/${repo}/releases/latest`);
-              return (!r.draft && (!!r.prerelease === isPrerelease)) ? [r] : [];
-            } catch {
-              return [];
-            }
-          }
-
           const existing = hasFile ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
-          const existingMap = new Map(existing.map(r => [r.version, r]));
-          const releases = isManual || !hasFile ? getAllReleases() : getLatestRelease();
+          let map = new Map(existing.map(r => [r.version, r]));
 
-          const map = new Map(existingMap);  // clone
-          let addedVersions = [];
+          const version = release.tag_name;
+          let changedVersions = [];
+          let removed = false;
 
-          for (const r of releases) {
-            const assets = r.assets.map(a => ({
-              name: a.name,
-              url: a.browser_download_url,
-              size: a.size,
-              digest: a.digest  // sha256
-            }));
-            const version = r.tag_name;
-            const entry = { version, url: r.html_url, assets };
-
-            const existed = map.has(version);
-            if (!existed || JSON.stringify(map.get(version)) !== JSON.stringify(entry)) {
-              map.set(version, entry);
-              if (!existed) {
-                addedVersions.push(version);
-              }
+          if (action === 'deleted') {
+            if (map.has(version)) {
+              map.delete(version);
+              removed = true;
             }
-          }
-
-          let removed = 0;
-          if (isManual || !hasFile) {
-            const valid = new Set(releases.map(r => r.tag_name));
-            for (const version of [...map.keys()]) {
-              if (!valid.has(version)) {
-                map.delete(version);
-                removed++;
-              }
-            }
-          }
-
-          if (map.size === 0) {
-            if (fs.existsSync(file)) {
-              fs.writeFileSync(file, '[]\n');
-              fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip_commit=false\n`);
-            } else {
+            if (!hasFile && map.size === 0) {
+              console.log(`No releases left and ${file} file did not exist — skipping file creation and commit.`);
               fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip_commit=true\n`);
+              process.exit(0);
             }
-            process.exit(0);
+          } else { // 'published' or 'edited'
+            const assets = release.assets.map(a => {
+              // const [algorithm, hash] = a.digest.split(':');  // sha256:...
+              return {
+                name: a.name,
+                url: a.browser_download_url,
+                size: a.size,
+                digest: a.digest
+              };
+            });
+            const entry = {
+              version,
+              url: release.html_url,
+              assets
+            };
+
+            if (map.has(version)) {
+              // edited
+              if (JSON.stringify(map.get(version)) !== JSON.stringify(entry)) {
+                map.set(version, entry);
+                changedVersions.push(version);
+              }
+            } else {
+              // published
+              map = new Map([[version, entry], ...map]);
+              changedVersions.push(version);
+            }
           }
 
-          // sort by version (desc)
-          const out = [...map.values()].sort((a, b) =>
-            b.version.localeCompare(a.version, undefined, { numeric: true })
-          );
-          fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n');
-
+          fs.writeFileSync(file, JSON.stringify([...map.values()], null, 2) + '\n');
           fs.appendFileSync(process.env.GITHUB_OUTPUT, [
-            `initial=${!hasFile}`,
-            `added_versions=${addedVersions.join(',')}`,
-            `manual=${isManual}`,
-            `removed=${removed}`,
+            `skip_commit=false`,
             `file=${file}`,
-            `skip_commit=false`
+            `initial=${!hasFile}`,
+            `changed_versions=${changedVersions.join(',')}`,
+            `removed=${removed}`
           ].join('\n') + '\n');
           EOF
 
       - name: Commit and push if changed
         if: steps.update-json.outputs.skip_commit != 'true'
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           FILE="${{ steps.update-json.outputs.file }}"
           git add "$FILE"
 
           if ! git diff --cached --quiet; then
             INITIAL="${{ steps.update-json.outputs.initial }}"
-            ADDED_VERSIONS="${{ steps.update-json.outputs.added_versions }}"
-            MANUAL="${{ steps.update-json.outputs.manual }}"
+            CHANGED_VERSIONS="${{ steps.update-json.outputs.changed_versions }}"
             REMOVED="${{ steps.update-json.outputs.removed }}"
 
-            IFS=',' read -r -a VERSIONS <<< "$ADDED_VERSIONS"
+            IFS=',' read -r -a VERSIONS <<< "$CHANGED_VERSIONS"
             ADDED_COUNT="${#VERSIONS[@]}"
 
             if [ "$INITIAL" = "true" ]; then
               MSG="Initial $FILE"
             elif [ "$ADDED_COUNT" -gt 0 ]; then
               MSG="Update $FILE for version ${VERSIONS[0]}"
-            elif [ "$MANUAL" = "true" ] && [ "$REMOVED" -gt 0 ]; then
+            elif [ "$REMOVED" = "true" ]; then
               MSG="chore: sync $FILE"
             else
               MSG="Update $FILE"
             fi
 
             git commit -m "$MSG"
-            git pull --rebase origin $(git rev-parse --abbrev-ref HEAD)
             git push
+          else
+            echo "No commit: file unchanged"
           fi
