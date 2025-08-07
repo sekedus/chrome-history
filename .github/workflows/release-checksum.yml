@@ -1,0 +1,254 @@
+name: Extract Installer Info from GitHub Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  extract-and-generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache ".cache" directory (node_modules & downloads)
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: ${{ runner.os }}-cache-${{ hashFiles('.github/workflows/**.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-cache-
+
+      - name: Install dependencies
+        run: npm install got@^11 --prefix .cache
+
+      - name: Extract links, download files, and add/update JSON
+        env:
+          NODE_PATH: .cache/node_modules
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const crypto = require('crypto');
+          const got = require('got');
+
+          const API_URL = process.env.GITHUB_API_URL;
+          const REPO = process.env.GITHUB_REPOSITORY;
+
+          const STABLE_FILE = 'releases.json';
+          const PRE_FILE = 'releases-pre.json';
+
+          // Match .exe or .msi from [label](url) or (url)
+          const assetRegex = /[:-] \[([^\]]+\.(?:exe|msi)(?:[^\]]+)?)\]\((https?:\/\/[^\)]+)\)/gi;
+
+          const gotConfig = {
+            headers: { Authorization: `token ${process.env.GITHUB_TOKEN}` },
+            responseType: 'json'
+          };
+
+          function hashContent(content, algo = 'sha256') {
+            return crypto.createHash(algo).update(content).digest('hex');
+          }
+
+          function getSafeFilename(name, url) {
+            try {
+              return encodeURIComponent(name);
+            } catch {
+              return encodeURIComponent(path.basename(url));
+            }
+          }
+
+          async function getOrCacheAsset(descDigest, name, url) {
+            const downloadDir = path.join('.cache', 'downloads', descDigest);
+            fs.mkdirSync(downloadDir, { recursive: true });
+
+            const safeName = getSafeFilename(name, url);
+            const cachePath = path.join(downloadDir, safeName);
+            let buffer;
+
+            if (fs.existsSync(cachePath)) {
+              buffer = fs.readFileSync(cachePath);
+              console.log(`♻️ Reused cached asset: ${cachePath}`);
+            } else {
+              try {
+                const resp = await got(url, { responseType: 'buffer', timeout: 30000 });
+                buffer = resp.body;
+                fs.writeFileSync(cachePath, buffer);
+                console.log(`⬇️ Downloaded and cached: ${cachePath}`);
+              } catch (e) {
+                console.warn(`❌ Failed to fetch ${url} for ${name}: ${e.message}`);
+                return null;
+              }
+            }
+
+            return {
+              name,
+              url,
+              size: buffer.length,
+              digest: {
+                sha256: hashContent(buffer, 'sha256'),
+                sha1: hashContent(buffer, 'sha1'),
+                md5: hashContent(buffer, 'md5')
+              }
+            };
+          }
+
+          async function getReleases() {
+            const isManual = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
+            const baseUrl = `${API_URL}/repos/${REPO}/releases`;
+
+            if (!isManual) {
+              // Only fetch latest release
+              try {
+                const res = await got(`${baseUrl}/latest`, gotConfig);
+                return [res.body];
+              } catch (err) {
+                console.warn(`⚠️ Failed to get latest release: ${err.message}`);
+                return [];
+              }
+            }
+
+            // Manual: fetch all releases
+            const releases = [];
+            const perPage = 100;
+            let page = 1;
+
+            while (true) {
+              const url = `${baseUrl}?per_page=${perPage}&page=${page}`;
+              try {
+                const res = await got(url, gotConfig);
+                if (Array.isArray(res.body)) {
+                  releases.push(...res.body);
+                  if (res.body.length < perPage) break;
+                  page++;
+                } else {
+                  break;
+                }
+              } catch (err) {
+                console.warn(`⚠️ Failed to fetch page ${page} of releases: ${err.message}`);
+                break;
+              }
+            }
+
+            return releases;
+          }
+
+          async function getAssetInfoFromBody(desc) {
+            const matches = [...desc.matchAll(assetRegex)];
+            const assets = [];
+            const descDigest = hashContent(desc);
+
+            for (const [, name, url] of matches) {
+              const asset = await getOrCacheAsset(descDigest, name, url);
+              if (asset) assets.push(asset);
+            }
+
+            return { assets, descDigest };
+          }
+
+          async function processReleases(releases, outputFile, filterFn) {
+            const fileExists = fs.existsSync(outputFile);
+            let existing = fileExists ? JSON.parse(fs.readFileSync(outputFile, 'utf8')) : [];
+
+            const seenVersions = new Set();
+            const updated = [...existing];
+
+            for (const release of releases.filter(filterFn)) {
+              const version = release.tag_name.replace(/^v/, '');
+              const desc = release.body || '';
+              const releaseUrl = release.html_url;
+              const { assets, descDigest } = await getAssetInfoFromBody(desc);
+              const fullDigest = 'sha256:' + descDigest;
+
+              const existingIndex = updated.findIndex(e => e.version === version);
+              const prevDigest = existingIndex !== -1 ? updated[existingIndex].desc_digest : null;
+
+              if (existingIndex !== -1 && prevDigest === fullDigest) {
+                console.log(`↩️ Skipping unchanged version ${version}`);
+                seenVersions.add(version);
+                continue;
+              }
+
+              if (!assets.length) {
+                console.warn(`⚠️ No valid assets found in release ${version}`);
+                continue;
+              }
+
+              const entry = {
+                version,
+                url: releaseUrl,
+                desc_digest: fullDigest,
+                assets
+              };
+              seenVersions.add(version);
+
+              if (existingIndex === -1) {
+                console.log(`➕ Adding new version ${version}`);
+                updated.unshift(entry); // newest on top
+              } else {
+                console.log(`🔄 Updating modified version ${version}`);
+                updated[existingIndex] = entry;
+              }
+            }
+
+            // Remove release that are no longer published (e.g. deleted or re-drafted)
+            const final = updated.filter(entry => seenVersions.has(entry.version));
+
+            if (final.length === 0) {
+              console.log(`🚫 No valid releases to write to ${outputFile}, skipping.`);
+              return;
+            }
+
+            const newJson = JSON.stringify(final, null, 2);
+
+            if (fileExists && fs.readFileSync(outputFile, 'utf8') === newJson) {
+              console.log(`♻️ ${outputFile} unchanged, not rewritten.`);
+              return;
+            }
+
+            fs.writeFileSync(outputFile, newJson);
+            console.log(`✅ ${fileExists ? 'Updated' : 'Created'} ${outputFile} with ${final.length} release(s)`);
+          }
+
+          async function main() {
+            const releases = await getReleases();
+            await processReleases(releases, STABLE_FILE, r => !r.draft && !r.prerelease);
+            await processReleases(releases, PRE_FILE, r => !r.draft && r.prerelease);
+          }
+
+          main().catch(err => {
+            console.error(err);
+            process.exit(1);
+          });
+          EOF
+
+      - name: Check for newly created or updated release JSON files
+        id: commitinfo
+        run: |
+          shopt -s nullglob
+          files=(releases*.json)
+          git add "${files[@]}"
+
+          # Default commit message
+          echo "message=🤖 Update release info for ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+          files_added=$(git diff --cached --name-status -- releases*.json | grep '^A' | wc -l)
+          if [ "$files_added" -gt 0 ]; then
+            echo "message=🤖 Initial release info for ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit release info JSON
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: ${{ steps.commitinfo.outputs.message }}
+          file_pattern: releases*.json
