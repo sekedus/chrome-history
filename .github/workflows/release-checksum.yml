@@ -84,9 +84,16 @@ jobs:
                 for await (const chunk of body) {
                   chunks.push(chunk);
                 }
-                return Buffer.concat(chunks);
+                const buffer = Buffer.concat(chunks);
+
+                // Optional: detect HTML response pretending to be a binary
+                if (headers['content-type']?.includes('text/html') || buffer.slice(0, 100).toString().toLowerCase().includes('<!doctype html')) {
+                  throw new Error(`Downloaded content looks like HTML instead of binary (content-type: ${headers['content-type'] || 'unknown'})`);
+                }
+
+                return buffer;
               } catch (err) {
-                console.warn(`⚠️ Attempt ${attempt} failed for ${url}: ${err.message}`);
+                console.warn(`⚠️ Attempt ${attempt} failed for "${url}": ${err.message}`);
                 if (attempt < maxRetries) {
                   await delay(1000 * attempt);
                 } else {
