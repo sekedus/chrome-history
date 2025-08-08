@@ -10,12 +10,14 @@ jobs:
     # Only run on release events, skip manual triggers
     if: github.event_name != 'workflow_dispatch' && github.event.release.draft == false
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -240,7 +242,7 @@ jobs:
           # Check if any files are newly added
           files_added=$(git diff --cached --name-status -- data/releases*.json | grep '^A' | wc -l)
           if [ "$files_added" -gt 0 ]; then
-            echo "message=🤖 Initial release info for ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "message=🤖 Initial release info" >> "$GITHUB_OUTPUT"
           fi
 
           # Check if any lines were removed (e.g. deleted release entry)
