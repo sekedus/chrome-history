@@ -9,11 +9,11 @@ Check the [releases file](https://github.com/sekedus/chrome-history/tree/main/da
 <table>
   <tr>
     <td>Stable</td>
-    <td><img alt="GitHub file size in bytes" src="https://img.shields.io/github/size/sekedus/chrome-history/data%2Freleases.json"></td>
+    <td><a href="./data/releases.json"><img alt="GitHub file size in bytes" src="https://img.shields.io/github/size/sekedus/chrome-history/data%2Freleases.json"></a></td>
   </tr>
   <tr>
     <td>Dev/Beta</td>
-    <td><img alt="GitHub file size in bytes" src="https://img.shields.io/github/size/sekedus/chrome-history/data%2Freleases-pre.json"></td>
+    <td><a href="./data/releases-pre.json"><img alt="GitHub file size in bytes" src="https://img.shields.io/github/size/sekedus/chrome-history/data%2Freleases-pre.json"></a></td>
   </tr>
 </table>
 
