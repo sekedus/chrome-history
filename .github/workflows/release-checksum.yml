@@ -51,7 +51,7 @@ jobs:
           const PRE_FILE = path.join('data', 'releases-pre.json');
 
           // Match .exe or .msi from [name.exe](url) or [file name (.msi)](url)
-          const assetRegex = /[:-] \[([^\]]+\.(?:exe|msi)(?:[^\]]+)?)\]\((https?:\/\/[^\)]+)\)/gi;
+          const assetRegex = /(installer|portable):\s+\[([^\]]+\.(?:exe|msi)(?:[^\]]+)?)\]\((https?:\/\/[^\)]+)\)/gi;
 
           function hashContent(content, algo = 'sha256') {
             return crypto.createHash(algo).update(content).digest('hex');
@@ -154,10 +154,12 @@ jobs:
               // Match asset line
               const match = assetRegex.exec(line);
               if (match) {
-                const [, name, url] = match;
-                const asset = await getOrCacheAsset(descDigest, name, url);
-                if (asset) {
-                  if (currentArch) asset.arch = currentArch;
+                const [, type, name, url] = match;
+                const baseAsset = await getOrCacheAsset(descDigest, name, url);
+                if (baseAsset) {
+                  const asset = currentArch
+                    ? { arch: currentArch, type, ...baseAsset }
+                    : { type, ...baseAsset };
                   assets.push(asset);
                 }
               }
