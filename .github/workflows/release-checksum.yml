@@ -8,7 +8,7 @@ on:
 jobs:
   extract-and-generate:
     # Only run on release events, skip manual triggers
-    if: github.event_name != 'workflow_dispatch' && github.event.release.draft == false
+    if: github.event_name != 'workflow_dispatch' && github.event.release.draft == false && !(github.event.action == 'edited' && github.event.changes.draft.from == true)
     runs-on: ubuntu-latest
     permissions:
       contents: write
