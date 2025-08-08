@@ -86,7 +86,7 @@ jobs:
                 }
                 const buffer = Buffer.concat(chunks);
 
-                // Optional: detect HTML response pretending to be a binary
+                // Detect HTML response pretending to be a binary
                 if (headers['content-type']?.includes('text/html') || buffer.slice(0, 100).toString().toLowerCase().includes('<!doctype html')) {
                   throw new Error(`Downloaded content looks like HTML instead of binary (content-type: ${headers['content-type'] || 'unknown'})`);
                 }
@@ -139,23 +139,34 @@ jobs:
           }
 
           async function getAssetInfoFromBody(desc, descDigest) {
-            const matches = [...desc.matchAll(assetRegex)];
+            const lines = desc.split(/\r?\n/);
+            let currentArch = null;
             const assets = [];
 
-            for (const [, name, url] of matches) {
-              try {
+            for (const line of lines) {
+              // Detect architecture headings (e.g., **x86** or **x64**)
+              const archMatch = /^\*\*\s*(x86|x64)\s*\*\*/i.exec(line.trim());
+              if (archMatch) {
+                currentArch = archMatch[1];
+                continue;
+              }
+
+              // Match asset line
+              const match = assetRegex.exec(line);
+              if (match) {
+                const [, name, url] = match;
                 const asset = await getOrCacheAsset(descDigest, name, url);
                 if (asset) {
+                  if (currentArch) asset.arch = currentArch;
                   assets.push(asset);
                 }
-              } catch (err) {
-                console.error(`❌ Error processing asset ${name}: ${err.message}`);
               }
             }
-
             return assets;
           }
           async function processRelease(release, action) {
+            console.log(`📢 Action: ${action.toUpperCase()} | Version: ${release.tag_name}`);
+
             fs.mkdirSync('data', { recursive: true });
 
             const file = release.prerelease ? PRE_FILE : STABLE_FILE;
@@ -231,7 +242,7 @@ jobs:
             const release = event.release;
 
             if (!release || !release.tag_name) {
-              throw new Error("No release info found in event payload.");
+              throw new Error("No release info found.");
             }
 
             await processRelease(release, event.action);
