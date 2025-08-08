@@ -44,8 +44,8 @@ jobs:
           const { request } = require(path.resolve('.cache/node_modules/undici'));
 
           const EVENT_PATH = process.env.GITHUB_EVENT_PATH;
-          const STABLE_FILE = 'releases.json';
-          const PRE_FILE = 'releases-pre.json';
+          const STABLE_FILE = path.join('data', 'releases.json');
+          const PRE_FILE = path.join('data', 'releases-pre.json');
 
           // Match .exe or .msi from [name.exe](url) or [file name (.msi)](url)
           const assetRegex = /[:-] \[([^\]]+\.(?:exe|msi)(?:[^\]]+)?)\]\((https?:\/\/[^\)]+)\)/gi;
@@ -140,6 +140,8 @@ jobs:
             return assets;
           }
           async function processRelease(release, action) {
+            fs.mkdirSync('data', { recursive: true });
+
             const file = release.prerelease ? PRE_FILE : STABLE_FILE;
             const fileExists = fs.existsSync(file);
             const existing = fileExists ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
@@ -229,20 +231,20 @@ jobs:
         id: commitinfo
         run: |
           shopt -s nullglob
-          files=(releases*.json)
+          files=(data/releases*.json)
           git add "${files[@]}"
 
           # Default message
           echo "message=🤖 Update release info for ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
           # Check if any files are newly added
-          files_added=$(git diff --cached --name-status -- releases*.json | grep '^A' | wc -l)
+          files_added=$(git diff --cached --name-status -- data/releases*.json | grep '^A' | wc -l)
           if [ "$files_added" -gt 0 ]; then
             echo "message=🤖 Initial release info for ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
           # Check if any lines were removed (e.g. deleted release entry)
-          files_removed=$(git diff --cached --numstat -- releases*.json | awk '$2 > $1 {exit 1}' && echo 0 || echo 1)
+          files_removed=$(git diff --cached --numstat -- data/releases*.json | awk '$2 > $1 {exit 1}' && echo 0 || echo 1)
           if [ "$files_removed" -eq 1 ]; then
             echo "message=chore: sync release JSON files (remove old version)" >> "$GITHUB_OUTPUT"
           fi
@@ -251,4 +253,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: ${{ steps.commitinfo.outputs.message }}
-          file_pattern: releases*.json
+          file_pattern: data/releases*.json

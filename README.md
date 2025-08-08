@@ -1,12 +1,23 @@
 # chrome-history
 
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/sekedus/chrome-history/total)
-
-
 List of all stable Chrome Portable versions for <ins>**Windows**</ins>.
 
-Check the [releases page](https://github.com/sekedus/chrome-history/releases) for the download link.
+Check the [releases file](https://github.com/sekedus/chrome-history/tree/main/data) for the download link.
 
+---
+
+<table>
+  <tr>
+    <td>Stable</td>
+    <td><img alt="GitHub file size in bytes" src="https://img.shields.io/github/size/sekedus/chrome-history/data%2Freleases.json"></td>
+  </tr>
+  <tr>
+    <td>Dev/Beta</td>
+    <td><img alt="GitHub file size in bytes" src="https://img.shields.io/github/size/sekedus/chrome-history/data%2Freleases-pre.json"></td>
+  </tr>
+</table>
+
+---
 ㅤ
 <details>
   <summary><strong>📑 Table of Contents (click to expand)</strong></summary>
