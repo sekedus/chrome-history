@@ -33,7 +33,7 @@ jobs:
             ${{ runner.os }}-cache-
 
       - name: Install dependencies
-        run: npm install undici@6 --prefix .cache
+        run: npm install undici@6 @tonyrl/rand-user-agent --prefix .cache
 
       - name: Extract links, download files, and add/update JSON
         env:
@@ -44,6 +44,7 @@ jobs:
           const path = require('path');
           const crypto = require('crypto');
           const { request } = require(path.resolve('.cache/node_modules/undici'));
+          const { randUserAgent } = require(path.resolve('.cache/node_modules/@tonyrl/rand-user-agent'));
 
           const EVENT_PATH = process.env.GITHUB_EVENT_PATH;
           const STABLE_FILE = path.join('data', 'releases.json');
@@ -69,7 +70,13 @@ jobs:
 
             for (let attempt = 1; attempt <= maxRetries; attempt++) {
               try {
-                const { body, statusCode } = await request(url);
+                const { body, headers, statusCode } = await request(url, {
+                  maxRedirections: 5,
+                  headers: {
+                    'User-Agent': randUserAgent("desktop", "chrome", "linux"),
+                    'Accept': '*/*'
+                  }
+                });
                 if (statusCode !== 200) {
                   throw new Error(`HTTP ${statusCode}`);
                 }
