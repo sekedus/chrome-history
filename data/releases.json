@@ -1,0 +1,31 @@
+[
+  {
+    "version": "10.0.648.204",
+    "url": "https://github.com/sekedus/chrome-history/releases/tag/10.0.648.204",
+    "desc_digest": "sha256:ac8009d71eb7178577c4e512941a5a3b341acf9f00102543fc3cc56b126472b2",
+    "assets": [
+      {
+        "type": "installer",
+        "name": "GoogleChrome_10.0.648.204_offline_installer.exe",
+        "url": "https://web.archive.org/web/20110413085311/http://dl.google.com/chrome/install/648.204/chrome_installer.exe",
+        "size": 26611768,
+        "digest": {
+          "sha256": "5effa03140d863e17c14430c417ae0cc785907e28261b21dab9ceee1229eafcd",
+          "sha1": "1b2d73a139085eec9dbf73dcb684b87538210c20",
+          "md5": "8ec0add3879013560e6bd5b890fa174a"
+        }
+      },
+      {
+        "type": "portable",
+        "name": "GoogleChromePortable_10.0.648.204_online.paf.exe",
+        "url": "https://master.dl.sourceforge.net/project/portableapps/Google%20Chrome%20Portable/Additional%20Versions/GoogleChromePortable_10.0.648.204_online.paf.exe?viasf=1",
+        "size": 1560880,
+        "digest": {
+          "sha256": "695c637a33d7f4d01f4a76b39a0328555017f5e7feddbaca530117aaef0574d8",
+          "sha1": "19f3b0ee1a3f408e7a741ea982a8b7f3be4f23da",
+          "md5": "fa96e2b05eb17e44ea7af4de02e6baa1"
+        }
+      }
+    ]
+  }
+]
