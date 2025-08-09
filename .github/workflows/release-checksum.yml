@@ -5,6 +5,10 @@ on:
     types: [published, edited, deleted]
   workflow_dispatch:  # Just to show this workflow in the Actions tab
 
+concurrency:
+  group: release-json-update
+  cancel-in-progress: false
+
 jobs:
   extract-and-generate:
     # Only run on release events, skip manual triggers
@@ -272,7 +276,7 @@ jobs:
             echo "message=🤖 Initial release info" >> "$GITHUB_OUTPUT"
           fi
 
-          # Check if any lines were removed (e.g. deleted release entry)
+          # Check if any lines were removed (deleted release entry)
           files_removed=$(git diff --cached --numstat -- data/releases*.json | awk '$2 > $1 {exit 1}' && echo 0 || echo 1)
           if [ "$files_removed" -eq 1 ]; then
             echo "message=chore: sync release JSON files (remove old version)" >> "$GITHUB_OUTPUT"
