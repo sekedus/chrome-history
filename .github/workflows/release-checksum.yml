@@ -108,8 +108,8 @@ jobs:
             }
           }
 
-          async function getOrCacheAsset(descDigest, name, url) {
-            const downloadDir = path.join('.cache', 'downloads', descDigest);
+          async function getOrCacheAsset(name, url) {
+            const downloadDir = path.join('.cache', 'downloads');
             fs.mkdirSync(downloadDir, { recursive: true });
 
             const safeName = getSafeFilename(name, url);
@@ -142,7 +142,7 @@ jobs:
             };
           }
 
-          async function getAssetInfoFromBody(desc, descDigest) {
+          async function getAssetInfoFromBody(desc) {
             const lines = desc.split(/\r?\n/);
             let currentArch = null;
             const assets = [];
@@ -158,8 +158,10 @@ jobs:
               // Match asset line
               const match = assetRegex.exec(line);
               if (match) {
-                const [, type, name, url] = match;
-                const baseAsset = await getOrCacheAsset(descDigest, name, url);
+                let [, type, name, url] = match;
+                type = type.toLowerCase();
+
+                const baseAsset = await getOrCacheAsset(name, url);
                 if (baseAsset) {
                   const asset = currentArch
                     ? { arch: currentArch, type, ...baseAsset }
@@ -170,6 +172,7 @@ jobs:
             }
             return assets;
           }
+
           async function processRelease(release, action) {
             console.log(`📢 Action: ${action.toUpperCase()} | Version: ${release.tag_name}`);
 
@@ -198,19 +201,18 @@ jobs:
             }
 
             const desc = release.body || '';
-            const descDigest = hashContent(desc);
-            const fullDigest = 'sha256:' + descDigest;
+            const descDigest = 'sha256:' + hashContent(desc);
 
             const existingIndex = existing.findIndex(e => e.version === version);
             const prevDigest = existingIndex !== -1 ? existing[existingIndex].desc_digest : null;
 
             // If the release is already in the file and the `desc_digest` hasn't changed
-            if (existingIndex !== -1 && prevDigest === fullDigest) {
+            if (existingIndex !== -1 && prevDigest === descDigest) {
               console.log(`↩️ Skipping unchanged version ${version}`);
               return;
             }
 
-            const assets = await getAssetInfoFromBody(desc, descDigest);
+            const assets = await getAssetInfoFromBody(desc);
             if (!assets.length) {
               console.warn(`⚠️ No valid assets found in release ${version}`);
             }
@@ -218,7 +220,7 @@ jobs:
             const entry = {
               version,
               url: release.html_url,
-              desc_digest: fullDigest,
+              desc_digest: descDigest,
               assets
             };
 
@@ -240,7 +242,7 @@ jobs:
             }
 
             fs.writeFileSync(file, newJson);
-            console.log(`✅ ${fileExists ? 'Updated' : 'Created'} ${file} with ${updated.length} release(s)`);
+            console.log(`✅ ${fileExists ? 'Updated' : 'Created'} ${file} — ${updated.length} release(s)`);
           }
 
           async function main() {
@@ -268,7 +270,7 @@ jobs:
           git add "${files[@]}"
 
           # Default message
-          echo "message=🤖 Update release info for ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          echo "message=🤖 Update release info: ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
           # Check if any files are newly added
           files_added=$(git diff --cached --name-status -- data/releases*.json | grep '^A' | wc -l)
