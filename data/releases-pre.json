@@ -1,0 +1,31 @@
+[
+  {
+    "version": "9.0.576.0",
+    "url": "https://github.com/sekedus/chrome-history/releases/tag/9.0.576.0",
+    "desc_digest": "sha256:5d7fb6ae698641bc864ee38752c655dee0c06f38b0041885a104cbeff3b74947",
+    "assets": [
+      {
+        "type": "installer",
+        "name": "GoogleChrome_9.0.576.0-Dev_offline_installer.exe",
+        "url": "https://web.archive.org/web/20101112184223/http://dl.google.com/chrome/install/576.0/chrome_installer.exe",
+        "size": 24757304,
+        "digest": {
+          "sha256": "a6e3f899a68a2124134a79410457889357a94c35c4733f5ea75b79db27c03eb9",
+          "sha1": "565eb67a87fcb21864c574ea6efbd96c6ec19244",
+          "md5": "675d8bd1f37e27258773194427ce2b05"
+        }
+      },
+      {
+        "type": "portable",
+        "name": "GoogleChromePortableDev_9.0.576.0_online.paf.exe",
+        "url": "https://master.dl.sourceforge.net/project/portableapps/Google%20Chrome%20Portable/Google%20Chrome%20Portable%209.0.576.0%20Dev/GoogleChromePortableDev_9.0.576.0_online.paf.exe?viasf=1",
+        "size": 1456064,
+        "digest": {
+          "sha256": "99fa1a53c65496b0afbb36723040a7c8f978fc2731e1d3ae32f4c37a45607747",
+          "sha1": "e4d3eb4bd559d9042d62f7eae47fe2419f8bc235",
+          "md5": "47c5023997af54c51db69d344dbfbd2a"
+        }
+      }
+    ]
+  }
+]
