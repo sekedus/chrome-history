@@ -1,0 +1,116 @@
+name: Validate File Checksum/Digest
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL of the file to check"
+        required: true
+      sha256:
+        description: "Expected SHA256 checksum (optional)"
+        required: false
+      sha1:
+        description: "Expected SHA1 checksum (optional)"
+        required: false
+      md5:
+        description: "Expected MD5 checksum (optional)"
+        required: false
+
+jobs:
+  checksum-validation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Extract filename from URL basename
+        id: filename
+        run: |
+          URL="${{ github.event.inputs.url }}"
+          BASENAME=$(basename "$URL" | tr -d '\r\n')
+          if [ -z "$BASENAME" ]; then
+            BASENAME="downloaded_file"
+          fi
+          echo "basename=$BASENAME" >> $GITHUB_OUTPUT
+
+      - name: Generate cache key and folder path from URL hash
+        id: cache-key
+        run: |
+          URL_HASH=$(echo "${{ github.event.inputs.url }}" | sha256sum | cut -c1-16)
+          CACHE_FOLDER=".cache/downloads/${URL_HASH}"
+          echo "key=file-cache-${URL_HASH}" >> $GITHUB_OUTPUT
+          echo "folder=$CACHE_FOLDER" >> $GITHUB_OUTPUT
+
+      - name: Restore cached folder
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.cache-key.outputs.folder }}
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Download file if not cached
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ steps.cache-key.outputs.folder }}"
+          echo "Downloading file from: ${{ github.event.inputs.url }}"
+          curl -L "${{ github.event.inputs.url }}" -o "${{ steps.cache-key.outputs.folder }}/${{ steps.filename.outputs.basename }}"
+          echo "File downloaded."
+
+      - name: Compute checksums
+        id: compute
+        run: |
+          FILE="${{ steps.cache-key.outputs.folder }}/${{ steps.filename.outputs.basename }}"
+          SHA256=$(sha256sum "$FILE" | awk '{print tolower($1)}')
+          SHA1=$(sha1sum "$FILE" | awk '{print tolower($1)}')
+          MD5=$(md5sum "$FILE" | awk '{print tolower($1)}')
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "sha1=$SHA1" >> $GITHUB_OUTPUT
+          echo "md5=$MD5" >> $GITHUB_OUTPUT
+          echo "Computed SHA256: $SHA256"
+          echo "Computed SHA1:   $SHA1"
+          echo "Computed MD5:    $MD5"
+
+      - name: Validate digests
+        run: |
+          FAILED=0
+
+          if [ -n "${{ github.event.inputs.sha256 }}" ]; then
+            EXPECTED=$(echo "${{ github.event.inputs.sha256 }}" | tr '[:upper:]' '[:lower:]')
+            if [ "${{ steps.compute.outputs.sha256 }}" != "$EXPECTED" ]; then
+              echo "❌ SHA256 mismatch!"
+              echo "Expected: $EXPECTED"
+              echo "Got:      ${{ steps.compute.outputs.sha256 }}"
+              FAILED=1
+            else
+              echo "✅ SHA256 matches."
+            fi
+          fi
+
+          if [ -n "${{ github.event.inputs.sha1 }}" ]; then
+            EXPECTED=$(echo "${{ github.event.inputs.sha1 }}" | tr '[:upper:]' '[:lower:]')
+            if [ "${{ steps.compute.outputs.sha1 }}" != "$EXPECTED" ]; then
+              echo "❌ SHA1 mismatch!"
+              echo "Expected: $EXPECTED"
+              echo "Got:      ${{ steps.compute.outputs.sha1 }}"
+              FAILED=1
+            else
+              echo "✅ SHA1 matches."
+            fi
+          fi
+
+          if [ -n "${{ github.event.inputs.md5 }}" ]; then
+            EXPECTED=$(echo "${{ github.event.inputs.md5 }}" | tr '[:upper:]' '[:lower:]')
+            if [ "${{ steps.compute.outputs.md5 }}" != "$EXPECTED" ]; then
+              echo "❌ MD5 mismatch!"
+              echo "Expected: $EXPECTED"
+              echo "Got:      ${{ steps.compute.outputs.md5 }}"
+              FAILED=1
+            else
+              echo "✅ MD5 matches."
+            fi
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            exit 1
+          fi
